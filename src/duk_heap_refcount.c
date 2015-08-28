@@ -228,7 +228,7 @@ DUK_LOCAL void duk__refcount_run_torture_finalizer(duk_hthread *thr, duk_hobject
  *  early and resume at a future alloc/decref/refzero.
  */
 
-DUK_LOCAL void duk__refzero_free_pending(duk_hthread *thr) {
+DUK_INTERNAL void duk_refzero_free_pending(duk_hthread *thr) {
 	duk_heaphdr *h1, *h2;
 	duk_heap *heap;
 	duk_int_t count = 0;
@@ -391,7 +391,7 @@ DUK_LOCAL void duk__refzero_free_pending(duk_hthread *thr) {
  *
  */
 
-DUK_INTERNAL void duk_heaphdr_refzero(duk_hthread *thr, duk_heaphdr *h) {
+DUK_LOCAL void duk__heaphdr_refzero_helper(duk_hthread *thr, duk_heaphdr *h, duk_bool_t skip_free_pending) {
 	duk_heap *heap;
 
 	DUK_ASSERT(thr != NULL);
@@ -439,7 +439,9 @@ DUK_INTERNAL void duk_heaphdr_refzero(duk_hthread *thr, duk_heaphdr *h) {
 
 		duk_heap_remove_any_from_heap_allocated(heap, h);
 		duk__queue_refzero(heap, h);
-		duk__refzero_free_pending(thr);
+		if (!skip_free_pending) {
+			duk_refzero_free_pending(thr);
+		}
 		break;
 
 	case DUK_HTYPE_BUFFER:
@@ -457,6 +459,14 @@ DUK_INTERNAL void duk_heaphdr_refzero(duk_hthread *thr, duk_heaphdr *h) {
 		DUK_D(DUK_DPRINT("invalid heap type in decref: %ld", (long) DUK_HEAPHDR_GET_TYPE(h)));
 		DUK_UNREACHABLE();
 	}
+}
+
+DUK_INTERNAL void duk_heaphdr_refzero(duk_hthread *thr, duk_heaphdr *h) {
+	duk__heaphdr_refzero_helper(thr, h, 0 /*skip_free_pending*/);
+}
+
+DUK_INTERNAL void duk_heaphdr_refzero_norz(duk_hthread *thr, duk_heaphdr *h) {
+	duk__heaphdr_refzero_helper(thr, h, 1 /*skip_free_pending*/);
 }
 
 #if !defined(DUK_USE_FAST_REFCOUNT_DEFAULT)
@@ -496,7 +506,27 @@ DUK_INTERNAL void duk_tval_decref(duk_hthread *thr, duk_tval *tv) {
 		duk_heaphdr *h = DUK_TVAL_GET_HEAPHDR(tv);
 		DUK_ASSERT(h != NULL);
 		DUK_ASSERT(DUK_HEAPHDR_HTYPE_VALID(h));
-		duk_heaphdr_decref(thr, h);
+		DUK_ASSERT(DUK_HEAPHDR_GET_REFCOUNT(h) >= 1);
+		if (DUK_HEAPHDR_PREDEC_REFCOUNT(h) != 0) {
+			return;
+		}
+		duk__heaphdr_refzero_helper(thr, h, 0 /*skip_free_pending*/);
+	}
+}
+
+DUK_INTERNAL void duk_tval_decref_norz(duk_hthread *thr, duk_tval *tv) {
+	DUK_ASSERT(thr != NULL);
+	DUK_ASSERT(tv != NULL);
+
+	if (DUK_TVAL_IS_HEAP_ALLOCATED(tv)) {
+		duk_heaphdr *h = DUK_TVAL_GET_HEAPHDR(tv);
+		DUK_ASSERT(h != NULL);
+		DUK_ASSERT(DUK_HEAPHDR_HTYPE_VALID(h));
+		DUK_ASSERT(DUK_HEAPHDR_GET_REFCOUNT(h) >= 1);
+		if (DUK_HEAPHDR_PREDEC_REFCOUNT(h) != 0) {
+			return;
+		}
+		duk__heaphdr_refzero_helper(thr, h, 1 /*skip_free_pending*/);
 	}
 }
 
@@ -548,9 +578,12 @@ DUK_INTERNAL void duk_heaphdr_decref(duk_hthread *thr, duk_heaphdr *h) {
 	if (DUK_HEAPHDR_PREDEC_REFCOUNT(h) != 0) {
 		return;
 	}
-	duk_heaphdr_refzero(thr, h);
+	duk__heaphdr_refzero_helper(thr, h, 0 /*skip_free_pending*/);
 }
 
+/* FIXME: this should just queue because only used internally?
+ * If so, rename for clarity.
+ */
 DUK_INTERNAL void duk_heaphdr_decref_allownull(duk_hthread *thr, duk_heaphdr *h) {
 	DUK_ASSERT(thr != NULL);
 	DUK_ASSERT(thr->heap != NULL);
@@ -565,7 +598,7 @@ DUK_INTERNAL void duk_heaphdr_decref_allownull(duk_hthread *thr, duk_heaphdr *h)
 	if (DUK_HEAPHDR_PREDEC_REFCOUNT(h) != 0) {
 		return;
 	}
-	duk_heaphdr_refzero(thr, h);
+	duk__heaphdr_refzero_helper(thr, h, 0 /*skip_free_pending*/);  /* FIXME: 0? */
 }
 
 #else
