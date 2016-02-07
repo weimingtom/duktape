@@ -1367,6 +1367,10 @@ Planned
 1.5.0 (XXXX-XX-XX)
 ------------------
 
+* Add duk_def_prop_list() with a flexible and more easily versionably
+  macro-based initializers syntax; this API call will eventually replace
+  duk_put_function_list() and duk_put_number_list() (GH-130, GH-575)
+
 * Add support for placing Duktape and user strings and objects into ROM
   (read-only data section) which reduces the startup RAM usage of a low
   memory build to ~3kB (from ~27kB) (GH-559)
