@@ -48,6 +48,10 @@
  */
 #define  DUK__ARRAY_MID_JOIN_LIMIT  4096
 
+/*
+ *  Shared helpers.
+ */
+
 /* Shared entry code for many Array built-ins.  Note that length is left
  * on stack (it could be popped, but that's not necessary).
  */
@@ -73,6 +77,42 @@ DUK_LOCAL duk_uint32_t duk__push_this_obj_len_u32_limited(duk_context *ctx) {
 	}
 	return ret;
 }
+
+#if defined(DUK_USE_ARRAY_FASTPATH)
+DUK_LOCAL duk_hobject *duk__arraypart_fastpath_this(duk_context *ctx) {
+	duk_hthread *thr;
+	duk_tval *tv;
+	duk_hobject *h;
+	duk_uint_t flags_mask, flags_bits, flags_value;
+
+	thr = (duk_hthread *) ctx;
+	DUK_ASSERT(thr->valstack_bottom > thr->valstack);  /* because call in progress */
+	tv = DUK_GET_THIS_TVAL_PTR(thr);
+
+	if (!DUK_TVAL_IS_OBJECT(tv)) {
+		return NULL;
+	}
+	h = DUK_TVAL_GET_OBJECT(tv);
+	DUK_ASSERT(h != NULL);
+
+	/* Require array part and array exotic behavior, reject readonly. */
+	flags_mask = DUK_HOBJECT_FLAG_ARRAY_PART | \
+	             DUK_HOBJECT_FLAG_EXOTIC_ARRAY | \
+	             DUK_HEAPHDR_FLAG_READONLY;
+	flags_bits = DUK_HOBJECT_FLAG_ARRAY_PART | \
+	             DUK_HOBJECT_FLAG_EXOTIC_ARRAY;
+	flags_value = DUK_HEAPHDR_GET_FLAGS_RAW((duk_heaphdr *) h);
+	if ((flags_value & flags_mask) != flags_bits) {
+		return NULL;
+	}
+
+	DUK_ASSERT_VS_SPACE(thr);
+	DUK_TVAL_SET_TVAL(thr->valstack_top, tv);
+	thr->valstack_top++;
+	DUK_HOBJECT_INCREF(thr, h);
+	return h;
+}
+#endif  /* DUK_USE_ARRAY_FASTPATH */
 
 /*
  *  Constructor
@@ -347,11 +387,67 @@ DUK_INTERNAL duk_ret_t duk_bi_array_prototype_join_shared(duk_context *ctx) {
  *  pop(), push()
  */
 
+#if defined(DUK_USE_ARRAY_FASTPATH)
+DUK_LOCAL duk_ret_t duk__array_pop_arraypart(duk_context *ctx, duk_hobject *h_arr) {
+	duk_hthread *thr;
+	duk_tval *tv_len;
+	duk_tval *tv_arraypart;
+	duk_tval *tv_val;
+	duk_double_t len;
+
+	thr = (duk_hthread *) ctx;
+
+	/* FIXME: guarantee length slot? */
+	tv_len = duk_hobject_find_existing_entry_tval_ptr(thr->heap, h_arr, DUK_HTHREAD_STRING_LENGTH(thr));
+	DUK_ASSERT(tv_len);  /* C API could circumvent this; worth checking? */
+	DUK_ASSERT(DUK_TVAL_IS_NUMBER(tv_len));  /* .length semantics */
+	len = DUK_TVAL_GET_NUMBER(tv_len);
+	/* FIXME: fastint assert? */
+
+	tv_arraypart = DUK_HOBJECT_A_GET_BASE(thr->heap, h_arr);
+	DUK_ASSERT(tv_arraypart != NULL);
+	DUK_ASSERT(DUK_TVAL_GET_NUMBER(tv_len) <= DUK_HOBJECT_GET_ASIZE(h_arr));
+
+	if (len <= 0) {
+		/* nop, return undefined */
+		return 0;
+	}
+
+	len -= 1.0;
+	DUK_TVAL_SET_NUMBER(tv_len, len);  /* no refcount update, no side effects */
+
+	DUK_ASSERT_VS_SPACE(thr);
+	tv_val = tv_arraypart + (duk_int_t) len;
+	if (DUK_TVAL_IS_UNUSED(tv_val)) {
+		DUK_TVAL_SET_UNDEFINED(thr->valstack_top);
+	} else {
+		DUK_TVAL_SET_TVAL(thr->valstack_top, tv_val);  /* FIXME: DUK_TVAL_SET_TVAL_INCREF */
+		DUK_TVAL_INCREF(thr, thr->valstack_top);
+	}
+	thr->valstack_top++;
+
+	DUK_TVAL_SET_UNUSED_UPDREF(thr, tv_arraypart + (duk_int_t) len);
+
+	return 1;
+}
+#endif  /* DUK_USE_ARRAY_FASTPATH */
+
 DUK_INTERNAL duk_ret_t duk_bi_array_prototype_pop(duk_context *ctx) {
 	duk_uint32_t len;
 	duk_uint32_t idx;
+	duk_hobject *h_arr;
 
 	DUK_ASSERT_TOP(ctx, 0);
+
+#if defined(DUK_USE_ARRAY_FASTPATH)
+	h_arr = duk__arraypart_fastpath_this(ctx);
+	if (h_arr) {
+		return duk__array_pop_arraypart(ctx, h_arr);
+	}
+#endif
+
+	/* FIXME: Merge fastpath check into a related call (push this, coerce length, etc) */
+
 	len = duk__push_this_obj_len_u32(ctx);
 	if (len == 0) {
 		duk_push_int(ctx, 0);
@@ -367,6 +463,55 @@ DUK_INTERNAL duk_ret_t duk_bi_array_prototype_pop(duk_context *ctx) {
 	return 1;
 }
 
+#if defined(DUK_USE_ARRAY_FASTPATH)
+DUK_LOCAL duk_ret_t duk__array_push_arraypart(duk_context *ctx, duk_hobject *h_arr) {
+	duk_hthread *thr;
+	duk_tval *tv_len;
+	duk_tval *tv_arraypart;
+	duk_tval *tv_src;
+	duk_tval *tv_dst;
+	duk_uint32_t len;
+	duk_idx_t i, n;
+
+	thr = (duk_hthread *) ctx;
+
+	/* FIXME: guarantee length slot? */
+	tv_len = duk_hobject_find_existing_entry_tval_ptr(thr->heap, h_arr, DUK_HTHREAD_STRING_LENGTH(thr));
+	DUK_ASSERT(tv_len);  /* C API could circumvent this; worth checking? */
+	DUK_ASSERT(DUK_TVAL_IS_NUMBER(tv_len));  /* .length semantics */
+	len = (duk_uint32_t) DUK_TVAL_GET_NUMBER(tv_len);
+	/* FIXME: fastint assert? */
+
+	tv_arraypart = DUK_HOBJECT_A_GET_BASE(thr->heap, h_arr);
+	DUK_ASSERT(tv_arraypart != NULL);
+	DUK_ASSERT(len <= DUK_HOBJECT_GET_ASIZE(h_arr));
+
+	n = (duk_idx_t) (thr->valstack_top - thr->valstack_bottom) - 1;  /* -1 for 'this' on stack top */
+	if (DUK_UNLIKELY(len + n < len)) {
+		DUK_D(DUK_DPRINT("Array.prototype.push() would go beyond 32-bit length, throw"));
+		return DUK_RET_RANGE_ERROR;
+	}
+	if (len + n > DUK_HOBJECT_GET_ASIZE(h_arr)) {
+		/* FIXME: extend support, rework hobject code a little bit. */
+		return 0;
+	}
+
+	tv_src = thr->valstack_bottom;
+	tv_dst = tv_arraypart + len;
+	for (i = 0; i < n; i++) {
+		DUK_TVAL_SET_TVAL(tv_dst, tv_src);
+		DUK_TVAL_INCREF(thr, tv_dst);  /* no side effects */
+		tv_src++;
+		tv_dst++;
+	}
+	len += n;
+
+	/* FIXME: fastint */
+	DUK_TVAL_SET_NUMBER(tv_len, len);  /* no refcount update, no side effects */
+	return 1;
+}
+#endif  /* DUK_USE_ARRAY_FASTPATH */
+
 DUK_INTERNAL duk_ret_t duk_bi_array_prototype_push(duk_context *ctx) {
 	/* Note: 'this' is not necessarily an Array object.  The push()
 	 * algorithm is supposed to work for other kinds of objects too,
@@ -376,6 +521,25 @@ DUK_INTERNAL duk_ret_t duk_bi_array_prototype_push(duk_context *ctx) {
 
 	duk_uint32_t len;
 	duk_idx_t i, n;
+	duk_hobject *h_arr;
+
+	/* FIXME: fast path will need some kind of 'guarantee space' operation
+	 * for the array part.  Perhaps combine a "lookup and extend" into a
+	 * helper?
+	 */
+
+#if defined(DUK_USE_ARRAY_FASTPATH)
+	h_arr = duk__arraypart_fastpath_this(ctx);
+	if (h_arr) {
+		duk_ret_t rc;
+		rc = duk__array_push_arraypart(ctx, h_arr);
+		if (rc != 0) {
+			return rc;
+		}
+		duk_pop(ctx);  /* 'this' binding, FIXME; merge helpers */
+		DUK_D(DUK_DPRINT("array push() fast path exited, resize case"));
+	}
+#endif
 
 	n = duk_get_top(ctx);
 	len = duk__push_this_obj_len_u32(ctx);
