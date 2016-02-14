@@ -1577,6 +1577,9 @@ Planned
 * Internal performance improvement: use raw value stack accessors internally
   when it's safe to do so (GH-582)
 
+* Internal performance improvement: add optional fast path for dense arrays in
+  Array.prototype operations like push() and pop() (GH-584)
+
 * Internal performance improvement: single step encoding for JSON values in
   the JSON slow path (GH-447)
 
