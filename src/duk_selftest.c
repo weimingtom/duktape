@@ -353,6 +353,8 @@ DUK_LOCAL void duk__selftest_cast_double_to_uint32(void) {
  */
 
 DUK_INTERNAL void duk_selftest_run_tests(void) {
+	/* FIXME: add self test for FP rounding mode, duktape assumes it's round to nearest */
+
 	duk__selftest_types();
 	duk__selftest_packed_tval();
 	duk__selftest_twos_complement();

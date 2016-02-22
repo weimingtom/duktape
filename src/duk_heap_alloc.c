@@ -754,6 +754,7 @@ duk_heap *duk_heap_alloc(duk_alloc_function alloc_func,
 	/*
 	 *  If selftests enabled, run them as early as possible
 	 */
+
 #if defined(DUK_USE_SELF_TESTS)
 	DUK_D(DUK_DPRINT("running self tests"));
 	duk_selftest_run_tests();
