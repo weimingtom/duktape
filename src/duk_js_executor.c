@@ -2753,22 +2753,16 @@ DUK_LOCAL DUK_NOINLINE void duk__js_execute_bytecode_inner(duk_hthread *entry_th
 		case DUK_OP_DECLVAR: {
 			duk_activation *act;
 			duk_context *ctx = (duk_context *) thr;
-			duk_small_uint_fast_t a = DUK_DEC_A(ins);
 			duk_small_uint_fast_t b = DUK_DEC_B(ins);
 			duk_small_uint_fast_t c = DUK_DEC_C(ins);
 			duk_tval *tv1;
 			duk_hstring *name;
 			duk_small_uint_t prop_flags;
-			duk_bool_t is_func_decl;
-			duk_bool_t is_undef_value;
 
 			tv1 = DUK__REGCONSTP(b);
 			DUK_ASSERT(DUK_TVAL_IS_STRING(tv1));
 			name = DUK_TVAL_GET_STRING(tv1);
 			DUK_ASSERT(name != NULL);
-
-			is_undef_value = ((a & DUK_BC_DECLVAR_FLAG_UNDEF_VALUE) != 0);
-			is_func_decl = ((a & DUK_BC_DECLVAR_FLAG_FUNC_DECL) != 0);
 
 			/* XXX: declvar takes an duk_tval pointer, which is awkward and
 			 * should be reworked.
@@ -2777,9 +2771,9 @@ DUK_LOCAL DUK_NOINLINE void duk__js_execute_bytecode_inner(duk_hthread *entry_th
 			/* Compiler is responsible for selecting property flags (configurability,
 			 * writability, etc).
 			 */
-			prop_flags = a & DUK_PROPDESC_FLAGS_MASK;
+			prop_flags = DUK_DEC_A(ins) & DUK_PROPDESC_FLAGS_MASK;
 
-			if (is_undef_value) {
+			if (ins & (DUK_BC_DECLVAR_FLAG_UNDEF_VALUE << DUK_BC_SHIFT_A)) {
 				duk_push_undefined(ctx);
 			} else {
 				duk_push_tval(ctx, DUK__REGCONSTP(c));
@@ -2787,7 +2781,12 @@ DUK_LOCAL DUK_NOINLINE void duk__js_execute_bytecode_inner(duk_hthread *entry_th
 			tv1 = DUK_GET_TVAL_NEGIDX(ctx, -1);
 
 			act = thr->callstack + thr->callstack_top - 1;
-			if (duk_js_declvar_activation(thr, act, name, tv1, prop_flags, is_func_decl)) {
+			if (duk_js_declvar_activation(thr,
+			                              act,
+			                              name,
+			                              tv1,
+			                              prop_flags,
+			                              (ins & (DUK_BC_DECLVAR_FLAG_FUNC_DECL << DUK_BC_SHIFT_A)) != 0 /*is_func_decl*/)) {
 				/* already declared, must update binding value */
 				tv1 = DUK_GET_TVAL_NEGIDX(ctx, -1);
 				duk_js_putvar_activation(thr, act, name, tv1, DUK__STRICT());
@@ -3239,7 +3238,6 @@ DUK_LOCAL DUK_NOINLINE void duk__js_execute_bytecode_inner(duk_hthread *entry_th
 
 		case DUK_OP_RETURN: {
 			duk_context *ctx = (duk_context *) thr;
-			duk_small_uint_fast_t a = DUK_DEC_A(ins);
 			duk_small_uint_fast_t b = DUK_DEC_B(ins);
 			/* duk_small_uint_fast_t c = DUK_DEC_C(ins); */
 			duk_small_uint_t ret_result;
@@ -3256,7 +3254,7 @@ DUK_LOCAL DUK_NOINLINE void duk__js_execute_bytecode_inner(duk_hthread *entry_th
 			 * propagate out of the executor longjmp handler.
 			 */
 
-			if (a & DUK_BC_RETURN_FLAG_HAVE_RETVAL) {
+			if (ins & (DUK_BC_RETURN_FLAG_HAVE_RETVAL << DUK_BC_SHIFT_A)) {
 				duk_push_tval(ctx, DUK__REGCONSTP(b));
 			} else {
 				duk_push_undefined(ctx);
@@ -3276,12 +3274,9 @@ DUK_LOCAL DUK_NOINLINE void duk__js_execute_bytecode_inner(duk_hthread *entry_th
 		case DUK_OP_CALL:
 		case DUK_OP_CALLI: {
 			duk_context *ctx = (duk_context *) thr;
-			duk_small_uint_fast_t a = DUK_DEC_A(ins);
 			duk_small_uint_fast_t c = DUK_DEC_C(ins);
 			duk_uint_fast_t idx;
 			duk_small_uint_t call_flags;
-			duk_small_uint_t flag_tailcall;
-			duk_small_uint_t flag_evalcall;
 			duk_tval *tv_func;
 			duk_hobject *obj_func;
 			duk_bool_t setup_rc;
@@ -3295,10 +3290,6 @@ DUK_LOCAL DUK_NOINLINE void duk__js_execute_bytecode_inner(duk_hthread *entry_th
 			 *      (for DUK_OP_CALLI, 'b' is indirect)
 			 * C -> nargs
 			 */
-
-			/* these are not necessarily 0 or 1 (may be other non-zero), that's ok */
-			flag_tailcall = (a & DUK_BC_CALL_FLAG_TAILCALL);
-			flag_evalcall = (a & DUK_BC_CALL_FLAG_EVALCALL);
 
 			idx = (duk_uint_fast_t) DUK_DEC_B(ins);
 			if (DUK_DEC_OP(ins) == DUK_OP_CALLI) {
@@ -3338,7 +3329,7 @@ DUK_LOCAL DUK_NOINLINE void duk__js_execute_bytecode_inner(duk_hthread *entry_th
 			duk_set_top(ctx, (duk_idx_t) (idx + c + 2));   /* [ ... func this arg1 ... argN ] */
 
 			call_flags = 0;
-			if (flag_tailcall) {
+			if (ins & (DUK_BC_CALL_FLAG_TAILCALL << DUK_BC_SHIFT_A)) {
 				/* We request a tail call, but in some corner cases
 				 * call handling can decide that a tail call is
 				 * actually not possible.
@@ -3420,7 +3411,7 @@ DUK_LOCAL DUK_NOINLINE void duk__js_execute_bytecode_inner(duk_hthread *entry_th
 
 				if (DUK_HOBJECT_IS_NATFUNC(obj_func) &&
 				    ((duk_hnatfunc *) obj_func)->func == duk_bi_global_object_eval) {
-					if (flag_evalcall) {
+					if (ins & (DUK_BC_CALL_FLAG_EVALCALL << DUK_BC_SHIFT_A)) {
 						DUK_DDD(DUK_DDDPRINT("call target is eval, call identifier was 'eval' -> direct eval"));
 						call_flags |= DUK_CALL_FLAG_DIRECT_EVAL;
 					} else {
@@ -3457,7 +3448,6 @@ DUK_LOCAL DUK_NOINLINE void duk__js_execute_bytecode_inner(duk_hthread *entry_th
 			duk_activation *act;
 			duk_catcher *cat;
 			duk_tval *tv1;
-			duk_small_uint_fast_t a;
 			duk_uint_fast_t bc;
 
 			/* A -> flags
@@ -3498,7 +3488,6 @@ DUK_LOCAL DUK_NOINLINE void duk__js_execute_bytecode_inner(duk_hthread *entry_th
 			                     (long) (DUK_DEC_A(ins) & DUK_BC_TRYCATCH_FLAG_WITH_BINDING ? 1 : 0),
 			                     (unsigned long) DUK_DEC_A(ins)));
 
-			a = DUK_DEC_A(ins);
 			bc = DUK_DEC_BC(ins);
 
 			act = thr->callstack + thr->callstack_top - 1;
@@ -3507,7 +3496,7 @@ DUK_LOCAL DUK_NOINLINE void duk__js_execute_bytecode_inner(duk_hthread *entry_th
 			/* 'with' target must be created first, in case we run out of memory */
 			/* XXX: refactor out? */
 
-			if (a & DUK_BC_TRYCATCH_FLAG_WITH_BINDING) {
+			if (ins & (DUK_BC_TRYCATCH_FLAG_WITH_BINDING << DUK_BC_SHIFT_A)) {
 				DUK_DDD(DUK_DDDPRINT("need to initialize a with binding object"));
 
 				if (act->lex_env == NULL) {
@@ -3553,13 +3542,13 @@ DUK_LOCAL DUK_NOINLINE void duk__js_execute_bytecode_inner(duk_hthread *entry_th
 			cat->flags = DUK_CAT_TYPE_TCF;
 			cat->h_varname = NULL;
 
-			if (a & DUK_BC_TRYCATCH_FLAG_HAVE_CATCH) {
+			if (ins & (DUK_BC_TRYCATCH_FLAG_HAVE_CATCH << DUK_BC_SHIFT_A)) {
 				cat->flags |= DUK_CAT_FLAG_CATCH_ENABLED;
 			}
-			if (a & DUK_BC_TRYCATCH_FLAG_HAVE_FINALLY) {
+			if (ins & (DUK_BC_TRYCATCH_FLAG_HAVE_FINALLY << DUK_BC_SHIFT_A)) {
 				cat->flags |= DUK_CAT_FLAG_FINALLY_ENABLED;
 			}
-			if (a & DUK_BC_TRYCATCH_FLAG_CATCH_BINDING) {
+			if (ins & (DUK_BC_TRYCATCH_FLAG_CATCH_BINDING << DUK_BC_SHIFT_A)) {
 				DUK_DDD(DUK_DDDPRINT("catch binding flag set to catcher"));
 				cat->flags |= DUK_CAT_FLAG_CATCH_BINDING_ENABLED;
 				tv1 = DUK__REGP(bc);
@@ -3570,7 +3559,7 @@ DUK_LOCAL DUK_NOINLINE void duk__js_execute_bytecode_inner(duk_hthread *entry_th
 				 * also exist and be reachable.
 				 */
 				cat->h_varname = DUK_TVAL_GET_STRING(tv1);
-			} else if (a & DUK_BC_TRYCATCH_FLAG_WITH_BINDING) {
+			} else if (ins & (DUK_BC_TRYCATCH_FLAG_WITH_BINDING << DUK_BC_SHIFT_A)) {
 				/* env created above to stack top */
 				duk_hobject *new_env;
 

@@ -31,6 +31,11 @@
 
 typedef duk_uint32_t duk_instr_t;
 
+#define DUK_BC_SHIFT_OP             0
+#define DUK_BC_SHIFT_A              6
+#define DUK_BC_SHIFT_B              14
+#define DUK_BC_SHIFT_C              23
+
 #define DUK_DEC_OP(x)               ((x) & 0x3fUL)
 #define DUK_DEC_A(x)                (((x) >> 6) & 0xffUL)
 #define DUK_DEC_B(x)                (((x) >> 14) & 0x1ffUL)
