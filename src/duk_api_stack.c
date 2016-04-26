@@ -2841,7 +2841,7 @@ DUK_EXTERNAL duk_bool_t duk_is_function(duk_context *ctx, duk_idx_t idx) {
 	                                       idx,
 	                                       DUK_HOBJECT_FLAG_COMPFUNC |
 	                                       DUK_HOBJECT_FLAG_NATFUNC |
-	                                       DUK_HOBJECT_FLAG_BOUND);
+	                                       DUK_HOBJECT_FLAG_BOUNDFUNC);
 }
 
 DUK_EXTERNAL duk_bool_t duk_is_c_function(duk_context *ctx, duk_idx_t idx) {
@@ -2862,7 +2862,7 @@ DUK_EXTERNAL duk_bool_t duk_is_bound_function(duk_context *ctx, duk_idx_t idx) {
 	DUK_ASSERT_CTX_VALID(ctx);
 	return duk__obj_flag_any_default_false(ctx,
 	                                       idx,
-	                                       DUK_HOBJECT_FLAG_BOUND);
+	                                       DUK_HOBJECT_FLAG_BOUNDFUNC);
 }
 
 DUK_EXTERNAL duk_bool_t duk_is_thread(duk_context *ctx, duk_idx_t idx) {
@@ -3515,39 +3515,33 @@ DUK_EXTERNAL duk_idx_t duk_push_object(duk_context *ctx) {
 
 DUK_EXTERNAL duk_idx_t duk_push_array(duk_context *ctx) {
 	duk_hthread *thr = (duk_hthread *) ctx;
-	duk_hobject *obj;
+	duk_uint_t flags;
+	duk_harray *obj;
 	duk_idx_t ret;
+	duk_tval *tv_slot;
 
 	DUK_ASSERT_CTX_VALID(ctx);
 
-	ret = duk_push_object_helper(ctx,
-	                             DUK_HOBJECT_FLAG_EXTENSIBLE |
-	                             DUK_HOBJECT_FLAG_ARRAY_PART |
-	                             DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_ARRAY),
-	                             DUK_BIDX_ARRAY_PROTOTYPE);
+	flags = DUK_HOBJECT_FLAG_EXTENSIBLE |
+	        DUK_HOBJECT_FLAG_ARRAY_PART |
+	        DUK_HOBJECT_FLAG_EXOTIC_ARRAY |
+	        DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_ARRAY);
 
-	obj = duk_require_hobject(ctx, ret);
+	obj = duk_harray_alloc(thr->heap, flags);
+	if (!obj) {
+		DUK_ERROR_ALLOC_FAILED(thr);
+	}
 
-	/*
-	 *  An array must have a 'length' property (E5 Section 15.4.5.2).
-	 *  The special array behavior flag must only be enabled once the
-	 *  length property has been added.
-	 *
-	 *  The internal property must be a number (and preferably a
-	 *  fastint if fastint support is enabled).
-	 */
+	/* XXX: since prototype is NULL, could save a check */
+	DUK_HOBJECT_SET_PROTOTYPE_UPDREF(thr, (duk_hobject *) obj, thr->builtins[DUK_BIDX_ARRAY_PROTOTYPE]);
 
-	duk_push_int(ctx, 0);
-#if defined(DUK_USE_FASTINT)
-	DUK_ASSERT(DUK_TVAL_IS_FASTINT(duk_require_tval(ctx, -1)));
-#endif
+	tv_slot = thr->valstack_top;
+	DUK_TVAL_SET_OBJECT(tv_slot, (duk_hobject *) obj);
+	DUK_HOBJECT_INCREF(thr, obj);  /* XXX: could preallocate with refcount = 1 */
+	ret = (duk_idx_t) (thr->valstack_top - thr->valstack_bottom);
+	thr->valstack_top++;
 
-	duk_hobject_define_property_internal(thr,
-	                                     obj,
-	                                     DUK_HTHREAD_STRING_LENGTH(thr),
-	                                     DUK_PROPDESC_FLAGS_W);
-	DUK_HOBJECT_SET_EXOTIC_ARRAY(obj);
-
+	DUK_ASSERT(obj->length == 0);  /* Array .length starts at zero. */
 	return ret;
 }
 
@@ -3603,6 +3597,7 @@ DUK_EXTERNAL duk_idx_t duk_push_thread_raw(duk_context *ctx, duk_uint_t flags) {
 	}
 
 	/* default prototype (Note: 'obj' must be reachable) */
+	/* XXX: since prototype is NULL, could save a check */
 	DUK_HOBJECT_SET_PROTOTYPE_UPDREF(thr, (duk_hobject *) obj, obj->builtins[DUK_BIDX_THREAD_PROTOTYPE]);
 
 	/* Initial stack size satisfies the stack spare constraints so there

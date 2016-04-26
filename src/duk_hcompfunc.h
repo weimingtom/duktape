@@ -9,6 +9,19 @@
 #define DUK_HCOMPFUNC_H_INCLUDED
 
 /*
+ *  Flags, field shared with duk_hobject
+ */
+
+/* FIXME: rename: duk_hcompiledfunction -> duk_hcompfunc */
+/*                duk_hnativefunction -> duk_hnatfunc */
+/*                duk_hbufferobject -> duk_hbufobj */
+
+#define DUK_HCOMPILEDFUNCTION_FLAG_STRICT                DUK_HEAPHDR_USER_FLAG(9)   /* function: function object is strict */
+#define DUK_HCOMPILEDFUNCTION_FLAG_NOTAIL                DUK_HEAPHDR_USER_FLAG(10)  /* function: function must not be tail called */
+#define DUK_HCOMPILEDFUNCTION_FLAG_NEWENV                DUK_HEAPHDR_USER_FLAG(11)  /* function: create new environment when called (see duk_hcompiledfunction) */
+#define DUK_HCOMPILEDFUNCTION_FLAG_NAMEBINDING           DUK_HEAPHDR_USER_FLAG(12)  /* function: create binding for func name (function templates only, used for named function expressions) */
+#define DUK_HCOMPILEDFUNCTION_FLAG_CREATEARGS            DUK_HEAPHDR_USER_FLAG(13)  /* function: create an arguments object on function call */
+/*
  *  Field accessor macros
  */
 

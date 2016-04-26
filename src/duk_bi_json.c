@@ -2459,6 +2459,7 @@ DUK_LOCAL duk_bool_t duk__json_stringify_fast_value(duk_json_enc_ctx *js_ctx, du
 				/* Array length is larger than 'asize'.  This shouldn't
 				 * happen in practice.  Bail out just in case.
 				 */
+				/* FIXME: happens now; did it happen before with e.g. new Array(10)? */
 				DUK_DD(DUK_DDPRINT("arr_len > asize, abort fast path"));
 				goto abort_fastpath;
 			}

@@ -55,6 +55,7 @@ DUK_LOCAL duk_uint32_t duk__push_this_obj_len_u32(duk_context *ctx) {
 	duk_uint32_t len;
 
 	(void) duk_push_this_coercible_to_object(ctx);
+	DUK_ASSERT_HOBJECT_VALID(duk_get_hobject(ctx, -1));
 	duk_get_prop_stridx(ctx, -1, DUK_STRIDX_LENGTH);
 	len = duk_to_uint32(ctx, -1);
 
@@ -78,14 +79,116 @@ DUK_LOCAL duk_uint32_t duk__push_this_obj_len_u32_limited(duk_context *ctx) {
  *  Constructor
  */
 
+DUK_INTERNAL duk_harray *duk_push_harray(duk_context *ctx) {
+	/* FIXME: API call could do this directly, cast to void in API macro. */
+	duk_hthread *thr;
+	duk_harray *a;
+
+	thr = (duk_hthread *) ctx;
+	duk_push_array(ctx);
+	DUK_ASSERT(DUK_TVAL_IS_OBJECT(thr->valstack_top - 1));
+	a = (duk_harray *) DUK_TVAL_GET_OBJECT(thr->valstack_top - 1);
+	DUK_ASSERT(a != NULL);
+	return a;
+}
+
+DUK_INTERNAL duk_harray *duk_push_harray_with_size(duk_context *ctx, duk_uint32_t size) {
+	duk_harray *a;
+
+	a = duk_push_harray(ctx);
+
+	duk_hobject_realloc_props((duk_hthread *) ctx,
+	                          (duk_hobject *) a,
+	                          0,
+	                          size,
+	                          0,
+	                          0);
+	a->length = size;  /* FIXME? */
+	return a;
+}
+
+/* FIXME: pack index range? */
+DUK_EXTERNAL void duk_pack(duk_context *ctx, duk_idx_t count) {
+	duk_hthread *thr;
+	duk_harray *a;
+	duk_tval *tv_src;
+	duk_tval *tv_dst;
+	duk_tval *tv_curr;
+	duk_tval *tv_limit;
+	duk_idx_t top;
+
+	DUK_ASSERT_CTX_VALID(ctx);
+	thr = (duk_hthread *) ctx;
+
+	top = (duk_idx_t) (thr->valstack_top - thr->valstack_bottom);
+	if (count > top) {
+		DUK_ERROR_RANGE_INVALID_COUNT(thr);
+	}
+
+	a = duk_push_harray_with_size(ctx, (duk_uint32_t) count);  /* XXX: uninitialized would be OK */
+	DUK_ASSERT(a != NULL);
+	DUK_ASSERT(DUK_HOBJECT_GET_ASIZE((duk_hobject *) a) == (duk_uint32_t) count);
+	DUK_ASSERT(count == 0 || DUK_HOBJECT_A_GET_BASE(thr->heap, (duk_hobject *) a) != NULL);
+	a->length = count;
+
+	/* Copy value stack values directly to the array part without
+	 * any refcount updates: net refcount changes are zero.
+	 */
+
+	tv_src = thr->valstack_top - count - 1;
+	tv_dst = DUK_HOBJECT_A_GET_BASE(thr->heap, (duk_hobject *) a);
+	DUK_MEMCPY((void *) tv_dst, (const void *) tv_src, count * sizeof(duk_tval));
+
+	/* Overwrite result array to final value stack location and wipe
+	 * the rest; no refcount operations needed.
+	 */
+
+	tv_dst = tv_src;  /* when count == 0, same as tv_src (OK) */
+	tv_src = thr->valstack_top - 1;
+	DUK_TVAL_SET_TVAL(tv_dst, tv_src);
+
+	tv_curr = tv_dst + 1;
+	tv_limit = thr->valstack_top;
+	while (tv_curr != tv_limit) {
+		/* Wipe policy: keep as 'undefined'. */
+		DUK_TVAL_SET_UNDEFINED(tv_curr);
+		tv_curr++;
+	}
+	thr->valstack_top = tv_dst + 1;
+}
+
+#if 0
+/* FIXME: unpack to position? */
+DUK_EXTERNAL void duk_unpack(duk_context *ctx) {
+	/* dense; length <= apart, dense; length > apart (?)
+	 * sparse
+	 */
+
+	/* FIXME: how to deal with 'unused' values? inherit? */
+}
+
+	/* FIXME: optimize by creating array into correct size directly, and
+	 * operating on the array part directly; values can be memcpy()'d from
+	 * value stack directly as long as refcounts are increased.
+	 */
+	for (i = 0; i < nargs; i++) {
+		duk_dup(ctx, i);
+		duk_xdef_prop_index_wec(ctx, -2, (duk_uarridx_t) i);
+	}
+
+	a->length = (duk_uint32_t) nargs;
+	return 1;
+}
+#endif
+
 DUK_INTERNAL duk_ret_t duk_bi_array_constructor(duk_context *ctx) {
 	duk_idx_t nargs;
+	duk_harray *a;
 	duk_double_t d;
 	duk_uint32_t len;
-	duk_idx_t i;
+	duk_uint32_t len_prealloc;
 
 	nargs = duk_get_top(ctx);
-	duk_push_array(ctx);
 
 	if (nargs == 1 && duk_is_number(ctx, 0)) {
 		/* XXX: expensive check (also shared elsewhere - so add a shared internal API call?) */
@@ -95,25 +198,17 @@ DUK_INTERNAL duk_ret_t duk_bi_array_constructor(duk_context *ctx) {
 			return DUK_RET_RANGE_ERROR;
 		}
 
-		/* XXX: if 'len' is low, may want to ensure array part is kept:
-		 * the caller is likely to want a dense array.
+		/* For small lengths create a dense preallocated array.
+		 * For large arrays preallocate an initial part.
 		 */
-		duk_push_u32(ctx, len);
-		duk_xdef_prop_stridx(ctx, -2, DUK_STRIDX_LENGTH, DUK_PROPDESC_FLAGS_W);  /* [ ToUint32(len) array ToUint32(len) ] -> [ ToUint32(len) array ] */
+		len_prealloc = len < 64 ? len : 64;
+		a = duk_push_harray_with_size(ctx, len_prealloc);
+		DUK_ASSERT(a != NULL);
+		a->length = len;
 		return 1;
 	}
 
-	/* XXX: optimize by creating array into correct size directly, and
-	 * operating on the array part directly; values can be memcpy()'d from
-	 * value stack directly as long as refcounts are increased.
-	 */
-	for (i = 0; i < nargs; i++) {
-		duk_dup(ctx, i);
-		duk_xdef_prop_index_wec(ctx, -2, (duk_uarridx_t) i);
-	}
-
-	duk_push_u32(ctx, (duk_uint32_t) nargs);
-	duk_xdef_prop_stridx(ctx, -2, DUK_STRIDX_LENGTH, DUK_PROPDESC_FLAGS_W);
+	duk_pack(ctx, nargs);
 	return 1;
 }
 
@@ -146,6 +241,7 @@ DUK_INTERNAL duk_ret_t duk_bi_array_prototype_to_string(duk_context *ctx) {
 		 * function and use duk_call_method().
 		 */
 
+DUK_D(DUK_DPRINT("this.join is not callable, fall back to (original) Object.toString"));
 		/* XXX: 'this' will be ToObject() coerced twice, which is incorrect
 		 * but should have no visible side effects.
 		 */
@@ -153,6 +249,8 @@ DUK_INTERNAL duk_ret_t duk_bi_array_prototype_to_string(duk_context *ctx) {
 		duk_set_top(ctx, 0);
 		return duk_bi_object_prototype_to_string(ctx);  /* has access to 'this' binding */
 	}
+
+DUK_D(DUK_DPRINT("use .join()"));
 
 	/* [ ... this func ] */
 
@@ -303,6 +401,7 @@ DUK_INTERNAL duk_ret_t duk_bi_array_prototype_join_shared(duk_context *ctx) {
 	count = 0;
 	idx = 0;
 	for (;;) {
+		DUK_DDD(DUK_DDDPRINT("join idx=%ld", (long) idx));
 		if (count >= DUK__ARRAY_MID_JOIN_LIMIT ||   /* intermediate join to avoid valstack overflow */
 		    idx >= len) { /* end of loop (careful with len==0) */
 			/* [ sep ToObject(this) len sep str0 ... str(count-1) ] */

@@ -523,6 +523,7 @@ DUK_INTERNAL duk_ret_t duk_bi_object_constructor_keys_shared(duk_context *ctx) {
 }
 
 DUK_INTERNAL duk_ret_t duk_bi_object_prototype_to_string(duk_context *ctx) {
+	/* FIXME: only call site */
 	duk_push_this(ctx);
 	duk_to_object_class_string_top(ctx);
 	return 1;
