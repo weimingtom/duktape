@@ -1675,6 +1675,14 @@ Planned
 * Make coroutine support optional (DUK_USE_COROUTINE_SUPPORT); disabling
   coroutines reduces code footprint by about 2kB (GH-829)
 
+* Add an internal type for representing Array instances (duk_harray) to
+  simplify array operations and improve performance; this also changes the
+  key order of Object.getOwnPropertyNames() for sparse arrays (arrays whose
+  internal "array part" has been abandoned) (GH-703)
+
+* Rename debugger protocol artificial property "bound" to "boundfunction"
+  for consistency with an internal flag rename (GH-703)
+
 * Add an extra module (extras/duk-v1-compat) providing many Duktape 1.x API
   calls removed in Duktape 2.x (multiple Github issues)
 
