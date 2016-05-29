@@ -311,6 +311,10 @@ DUK_INTERNAL duk_ret_t duk_bi_math_object_min(duk_context *ctx) {
 	return duk__math_minmax(ctx, DUK_DOUBLE_INFINITY, duk__fmin_fixed);
 }
 
+/* FIXME: the current random provider is not very good, and some platforms
+ * have a good provider, so make this configurable.  Fall back to the
+ * internal one if nothing is configured.
+ */
 DUK_INTERNAL duk_ret_t duk_bi_math_object_random(duk_context *ctx) {
 	duk_push_number(ctx, (duk_double_t) duk_util_tinyrandom_get_double((duk_hthread *) ctx));
 	return 1;
