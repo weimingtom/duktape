@@ -2125,7 +2125,6 @@ DUK_INTERNAL void duk_to_object_class_string_top(duk_context *ctx) {
 	duk_push_sprintf(ctx, "[object %s]", (const char *) DUK_HSTRING_GET_DATA(h_strclass));
 }
 
-#if !defined(DUK_USE_PARANOID_ERRORS)
 DUK_INTERNAL void duk_push_hobject_class_string(duk_context *ctx, duk_hobject *h) {
 	duk_hthread *thr;
 	duk_hstring *h_strclass;
@@ -2139,7 +2138,6 @@ DUK_INTERNAL void duk_push_hobject_class_string(duk_context *ctx, duk_hobject *h
 	DUK_ASSERT(h_strclass != NULL);
 	duk_push_sprintf(ctx, "[object %s]", (const char *) DUK_HSTRING_GET_DATA(h_strclass));
 }
-#endif  /* !DUK_USE_PARANOID_ERRORS */
 
 /* XXX: other variants like uint, u32 etc */
 DUK_INTERNAL duk_int_t duk_to_int_clamped_raw(duk_context *ctx, duk_idx_t idx, duk_int_t minval, duk_int_t maxval, duk_bool_t *out_clamped) {
@@ -4469,7 +4467,6 @@ DUK_INTERNAL void duk_push_string_funcptr(duk_context *ctx, duk_uint8_t *ptr, du
 	duk_push_lstring(ctx, (const char *) buf, sz * 2);
 }
 
-#if !defined(DUK_USE_PARANOID_ERRORS)
 /*
  *  Push readable string summarizing duk_tval.  The operation is side effect
  *  free and will only throw from internal errors (e.g. out of memory).
@@ -4587,4 +4584,3 @@ DUK_INTERNAL const char *duk_push_string_readable(duk_context *ctx, duk_idx_t id
 	DUK_ASSERT_CTX_VALID(ctx);
 	return duk_push_string_tval_readable(ctx, duk_get_tval(ctx, idx));
 }
-#endif  /* !DUK_USE_PARANOID_ERRORS */
